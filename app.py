@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 
-st.set_page_config(page_title="ระบบข้อมูลสวน", layout="wide")
-st.title("ระบบข้อมูลสวนของฉัน (Farm Data Platform)")
+st.set_page_config(page_title="ระบบข้อมูลสวนลำไย", layout="wide")
+st.title("ระบบข้อมูลสวนลำไย (Farm Data Platform)")
 
 แท็บอากาศ, แท็บน้ำ, แท็บสำรวจ, แท็บสะอาด = st.tabs(
     ["สภาพอากาศ", "ระดับน้ำแม่น้ำ", "สำรวจข้อมูล", "ทำความสะอาด"])
