@@ -12,6 +12,9 @@ HEADERS = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "Chrome/124.0 Safari/537.36"),
            "Accept": "application/json"}
 
+# หมายเหตุ: ชื่อคอลัมน์ห้ามมีจุด "." หรือวงเล็บ เพราะกราฟของ Streamlit (Vega-Lite)
+# จะตีความจุดเป็นตัวเข้าถึงฟิลด์ย่อย ทำให้วาดค่าไม่ออก — หน่วยจึงไปไว้ที่ caption/label แทน
+
 @st.cache_data(ttl=1800)
 def ดึงอากาศ(lat, lon, days):
     url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
@@ -21,8 +24,7 @@ def ดึงอากาศ(lat, lon, days):
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     w = pd.DataFrame(resp.json()["daily"])
-    w.columns = ["วันที่", "สูงสุด", "ต่ำสุด", "ฝน(มม.)",
-                 "ความชื้น(%)", "ลม(กม./ชม.)", "แสง(MJ/m²)"]
+    w.columns = ["วันที่", "สูงสุด", "ต่ำสุด", "ฝน", "ความชื้น", "ลม", "แสง"]
     return w
 
 @st.cache_data(ttl=1800)
@@ -32,14 +34,14 @@ def ดึงระดับน้ำ(lat, lon):
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     r = pd.DataFrame(resp.json()["daily"])
-    r.columns = ["วันที่", "ปริมาณน้ำ(ลบ.ม./วิ)"]
+    r.columns = ["วันที่", "ปริมาณน้ำ"]
     return r
 
 # ราคาสำรอง (snapshot ธ.ค. 2567) ใช้แสดงเมื่อเซิร์ฟเวอร์เข้า data.go.th ไม่ได้
 ราคาสำรอง = pd.DataFrame({
     "สินค้า": ["ทุเรียนหมอนทองคละ", "ยางแผ่นดิบชั้น 3", "เงาะโรงเรียนคละ",
               "กล้วยหอมทองขนาดคละ", "สับปะรดโรงงาน", "มันสำปะหลังคละ"],
-    "ราคา (บาท/กก.)": [135.0, 76.4, 40.2, 20.0, 12.5, 1.3],
+    "ราคา": [135.0, 76.4, 40.2, 20.0, 12.5, 1.3],
 })
 
 @st.cache_data(ttl=86400)
@@ -74,13 +76,15 @@ with แท็บอากาศ:
     try:
         w = ดึงอากาศ(lat, lon, วัน)
         m1, m2, m3 = st.columns(3)
-        m1.metric("อุณหภูมิสูงสุดพรุ่งนี้", f"{w['สูงสุด'].iloc[1]:.0f}°C")
-        m2.metric("ฝนรวม (ช่วงที่ดู)", f"{w['ฝน(มม.)'].sum():.0f} มม.")
-        m3.metric("ความชื้นเฉลี่ย", f"{w['ความชื้น(%)'].mean():.0f}%")
+        m1.metric("อุณหภูมิสูงสุดพรุ่งนี้", f"{w['สูงสุด'].iloc[1]:.0f} °C")
+        m2.metric("ฝนรวม (ช่วงที่ดู)", f"{w['ฝน'].sum():.0f} มม.")
+        m3.metric("ความชื้นเฉลี่ย", f"{w['ความชื้น'].mean():.0f} %")
+        st.write("อุณหภูมิสูงสุด/ต่ำสุด (°C)")
         st.line_chart(w.set_index("วันที่")[["สูงสุด", "ต่ำสุด"]])
-        st.bar_chart(w.set_index("วันที่")["ฝน(มม.)"])
-        with st.expander("ดูข้อมูลดิบทั้งหมด"):
-            st.dataframe(w, use_container_width=True)
+        st.write("ปริมาณฝนรายวัน (มม.)")
+        st.bar_chart(w.set_index("วันที่")["ฝน"])
+        with st.expander("ดูข้อมูลดิบทั้งหมด (หน่วย: °C, มม., %, กม./ชม., MJ/m²)"):
+            st.dataframe(w)
     except Exception as e:
         st.error(f"ดึงข้อมูลอากาศไม่สำเร็จ ลองใหม่อีกครั้ง (สาเหตุ: {e})")
 
@@ -92,10 +96,11 @@ with แท็บน้ำ:
     lon2 = c2.number_input("ลองจิจูด (จุดใกล้แม่น้ำ)", value=99.01, key="lon_river")
     try:
         r = ดึงระดับน้ำ(lat2, lon2)
-        st.line_chart(r.set_index("วันที่")["ปริมาณน้ำ(ลบ.ม./วิ)"])
+        st.write("ปริมาณการไหล (ลูกบาศก์เมตร/วินาที)")
+        st.line_chart(r.set_index("วันที่")["ปริมาณน้ำ"])
         st.info("ยิ่งค่าสูง = น้ำในแม่น้ำยิ่งมาก/เสี่ยงท่วม (เป็นปริมาณการไหล ไม่ใช่ระดับเป็นเมตร)")
         with st.expander("ดูข้อมูลดิบทั้งหมด"):
-            st.dataframe(r, use_container_width=True)
+            st.dataframe(r)
     except Exception as e:
         st.error(f"ดึงระดับน้ำไม่สำเร็จ ลองใหม่อีกครั้ง (สาเหตุ: {e})")
 
@@ -106,15 +111,16 @@ with แท็บราคา:
     if not สด:
         st.warning("ตอนนี้เซิร์ฟเวอร์เข้า data.go.th ไม่ได้ "
                    "(มักถูกบล็อกจาก IP ดาต้าเซ็นเตอร์) — แสดงราคาสำรองล่าสุด ธ.ค. 2567 แทน")
-        st.bar_chart(ราคาสำรอง.set_index("สินค้า")["ราคา (บาท/กก.)"])
-        st.dataframe(ราคาสำรอง, use_container_width=True, hide_index=True)
+        st.write("ราคาล่าสุด (บาท/กก.)")
+        st.bar_chart(ราคาสำรอง.set_index("สินค้า")["ราคา"])
+        st.dataframe(ราคาสำรอง, hide_index=True)
     else:
         ปีล่าสุด = int(ราคา["ปี"].max())
         สินค้าทั้งหมด = sorted(ราคา["สินค้า"].dropna().unique())
         ค่าเริ่ม = [s for s in ["ทุเรียนหมอนทองคละ", "เงาะโรงเรียนคละ", "ยางแผ่นดิบชั้น 3"]
                    if s in สินค้าทั้งหมด]
         เลือก = st.multiselect("เลือกสินค้าที่จะดู", สินค้าทั้งหมด, default=ค่าเริ่ม)
-        st.caption(f"ข้อมูลล่าสุดปี พ.ศ. {ปีล่าสุด} — สถิติทางการรายเดือน (จ.บึงกาฬ)")
+        st.caption(f"ข้อมูลล่าสุดปี พ.ศ. {ปีล่าสุด} — สถิติทางการรายเดือน (จ.บึงกาฬ) หน่วย บาท/กก.")
         เดือนเรียง = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
                      "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
         if เลือก:
@@ -122,10 +128,13 @@ with แท็บราคา:
             ปีนี้["เดือน"] = pd.Categorical(ปีนี้["เดือน"], categories=เดือนเรียง, ordered=True)
             ตาราง = ปีนี้.pivot_table(index="เดือน", columns="สินค้า",
                                      values="ราคา", observed=False)
+            ตาราง = ตาราง.sort_index()
+            ตาราง.index = ตาราง.index.astype(str)   # เลี่ยง categorical index ที่กราฟไม่ยอมวาด
             st.line_chart(ตาราง)
             เดือนล่าสุด = ตาราง.dropna(how="all").index[-1]
             st.write(f"ราคาเดือนล่าสุด ({เดือนล่าสุด} {ปีล่าสุด}) หน่วย บาท/กก.")
-            st.dataframe(ตาราง.loc[[เดือนล่าสุด]].T.rename(columns={เดือนล่าสุด: "ราคา"}),
-                         use_container_width=True)
+            แถวล่าสุด = ตาราง.loc[[เดือนล่าสุด]].T
+            แถวล่าสุด.columns = ["ราคา"]
+            st.dataframe(แถวล่าสุด)
         else:
             st.warning("เลือกสินค้าอย่างน้อย 1 อย่าง")
