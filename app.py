@@ -2,80 +2,93 @@ import streamlit as st
 import pandas as pd
 import requests
 
-st.set_page_config(page_title="ระบบข้อมูลสวนลำไย", layout="wide")
-st.title("ระบบข้อมูลสวนลำไย (Farm Data Platform)")
+st.set_page_config(page_title="ระบบข้อมูลเกษตรจาก API", layout="wide")
+st.title("ระบบข้อมูลเกษตรจาก API (Live Agri-Data)")
+st.caption("ดึงข้อมูลจริงแบบสดจากอินเทอร์เน็ต แล้วแสดงผลโต้ตอบได้")
 
-แท็บอากาศ, แท็บน้ำ, แท็บสำรวจ, แท็บสะอาด = st.tabs(
-    ["สภาพอากาศ", "ระดับน้ำแม่น้ำ", "สำรวจข้อมูล", "ทำความสะอาด"])
+# ดึงข้อมูลจาก API แล้ว cache ไว้ ไม่ต้องเรียกซ้ำทุกครั้งที่ผู้ใช้ขยับปุ่ม
+@st.cache_data(ttl=1800)
+def ดึงอากาศ(lat, lon, days):
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+           f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,"
+           f"relative_humidity_2m_mean,wind_speed_10m_max,shortwave_radiation_sum"
+           f"&timezone=Asia/Bangkok&forecast_days={days}")
+    w = pd.DataFrame(requests.get(url, timeout=30).json()["daily"])
+    w.columns = ["วันที่", "สูงสุด", "ต่ำสุด", "ฝน(มม.)",
+                 "ความชื้น(%)", "ลม(กม./ชม.)", "แสง(MJ/m²)"]
+    return w
 
-# ---------- แท็บ 1: สภาพอากาศจาก API ----------
+@st.cache_data(ttl=1800)
+def ดึงระดับน้ำ(lat, lon):
+    url = (f"https://flood-api.open-meteo.com/v1/flood?latitude={lat}&longitude={lon}"
+           f"&daily=river_discharge&forecast_days=30")
+    r = pd.DataFrame(requests.get(url, timeout=30).json()["daily"])
+    r.columns = ["วันที่", "ปริมาณน้ำ(ลบ.ม./วิ)"]
+    return r
+
+@st.cache_data(ttl=86400)
+def ดึงราคาเกษตร():
+    URL = "https://data.go.th/api/3/action/datastore_search"
+    RESOURCE_ID = "38b840af-f119-4bea-9208-66188da5cc1b"
+    recs = requests.get(URL, params={"resource_id": RESOURCE_ID, "limit": 5000},
+                        timeout=30).json()["result"]["records"]
+    ราคา = pd.DataFrame(recs).rename(columns={"เกษตรสำคัญบึงกาฬ": "สินค้า", "ค่า": "ราคา"})
+    ราคา["ราคา"] = pd.to_numeric(ราคา["ราคา"], errors="coerce")
+    return ราคา
+
+แท็บอากาศ, แท็บน้ำ, แท็บราคา = st.tabs(
+    ["สภาพอากาศ", "ระดับน้ำแม่น้ำ", "ราคาสินค้าเกษตร"])
+
+# ---------- แท็บ 1: สภาพอากาศ (Open-Meteo) ----------
 with แท็บอากาศ:
-    st.subheader("พยากรณ์อากาศ 15 วัน (Open-Meteo)")
-    lat = st.number_input("ละติจูด", value=18.90)
-    lon = st.number_input("ลองจิจูด", value=99.01)
-    if st.button("ดึงอากาศ 15 วัน"):
-        url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-               f"&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,"
-               f"relative_humidity_2m_mean,wind_speed_10m_max,shortwave_radiation_sum"
-               f"&timezone=Asia/Bangkok&forecast_days=15")
-        d = requests.get(url).json()["daily"]
-        w = pd.DataFrame(d)
-        w.columns = ["วันที่", "สูงสุด", "ต่ำสุด", "ฝน(มม.)",
-                     "ความชื้น(%)", "ลม(กม./ชม.)", "แสง(MJ/m²)"]
+    st.subheader("พยากรณ์อากาศรายวันของสวน")
+    c1, c2, c3 = st.columns(3)
+    lat = c1.number_input("ละติจูด", value=18.90)
+    lon = c2.number_input("ลองจิจูด", value=99.01)
+    วัน = c3.slider("จำนวนวันล่วงหน้า", 3, 16, 15)
+    w = ดึงอากาศ(lat, lon, วัน)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("อุณหภูมิสูงสุดพรุ่งนี้", f"{w['สูงสุด'].iloc[1]:.0f}°C")
+    m2.metric("ฝนรวม (ช่วงที่ดู)", f"{w['ฝน(มม.)'].sum():.0f} มม.")
+    m3.metric("ความชื้นเฉลี่ย", f"{w['ความชื้น(%)'].mean():.0f}%")
+    st.line_chart(w.set_index("วันที่")[["สูงสุด", "ต่ำสุด"]])
+    st.bar_chart(w.set_index("วันที่")["ฝน(มม.)"])
+    with st.expander("ดูข้อมูลดิบทั้งหมด"):
         st.dataframe(w, use_container_width=True)
-        st.line_chart(w.set_index("วันที่")[["สูงสุด", "ต่ำสุด"]])
-        st.bar_chart(w.set_index("วันที่")["ฝน(มม.)"])
-        st.line_chart(w.set_index("วันที่")["ความชื้น(%)"])
-        st.bar_chart(w.set_index("วันที่")[["ลม(กม./ชม.)", "แสง(MJ/m²)"]])
 
-# ---------- แท็บ 2: ระดับน้ำแม่น้ำ (เตือนภัยน้ำท่วม) ----------
+# ---------- แท็บ 2: ระดับน้ำแม่น้ำ (flood API) ----------
 with แท็บน้ำ:
-    st.subheader("ปริมาณน้ำในแม่น้ำ 15 วัน (Open-Meteo Flood API)")
-    st.caption("ใช้พิกัดเดียวกับแท็บอากาศ — ควรอยู่ใกล้แม่น้ำจริง ค่าถึงจะมีความหมาย")
-    if st.button("ดึงระดับน้ำแม่น้ำ 15 วัน"):
-        url = (f"https://flood-api.open-meteo.com/v1/flood?latitude={lat}&longitude={lon}"
-               f"&daily=river_discharge&forecast_days=15")
-        d = requests.get(url).json()["daily"]
-        r = pd.DataFrame(d)
-        r.columns = ["วันที่", "ปริมาณน้ำ(ลบ.ม./วิ)"]
+    st.subheader("ปริมาณการไหลของแม่น้ำ (เตือนภัยน้ำท่วม)")
+    c1, c2 = st.columns(2)
+    lat2 = c1.number_input("ละติจูด (จุดใกล้แม่น้ำ)", value=18.90, key="lat_river")
+    lon2 = c2.number_input("ลองจิจูด (จุดใกล้แม่น้ำ)", value=99.01, key="lon_river")
+    r = ดึงระดับน้ำ(lat2, lon2)
+    st.line_chart(r.set_index("วันที่")["ปริมาณน้ำ(ลบ.ม./วิ)"])
+    st.info("ยิ่งค่าสูง = น้ำในแม่น้ำยิ่งมาก/เสี่ยงท่วม (เป็นปริมาณการไหล ไม่ใช่ระดับเป็นเมตร)")
+    with st.expander("ดูข้อมูลดิบทั้งหมด"):
         st.dataframe(r, use_container_width=True)
-        st.line_chart(r.set_index("วันที่")["ปริมาณน้ำ(ลบ.ม./วิ)"])
-        st.info("ค่านี้คือ *ปริมาณการไหล* (ลบ.ม./วินาที) ยิ่งสูง = น้ำยิ่งมาก/เสี่ยงท่วมมากขึ้น "
-                "(ไม่ใช่ระดับน้ำเป็นเมตรตรง ๆ แต่ไปทางเดียวกัน)")
 
-# ---------- แท็บ 3: สำรวจข้อมูล ----------
-with แท็บสำรวจ:
-    st.subheader("อัปโหลด CSV เพื่อดูสถิติและกราฟ")
-    f1 = st.file_uploader("อัปโหลด CSV ข้อมูลสวน", type="csv", key="explore")
-    if f1:
-        df = pd.read_csv(f1)
-        st.dataframe(df, use_container_width=True)
-        st.write(df.describe())
-        num = df.select_dtypes("number").columns.tolist()
-        if num:
-            st.bar_chart(df[st.selectbox("คอลัมน์", num)])
-        if len(num) >= 2:
-            st.write("ความสัมพันธ์ (correlation)")
-            st.write(df[num].corr())
-
-# ---------- แท็บ 4: ทำความสะอาด ----------
-with แท็บสะอาด:
-    st.subheader("อัปโหลด CSV เพื่อเติมค่าว่าง/ลบค่าผิดปกติ")
-    f2 = st.file_uploader("อัปโหลด CSV เพื่อทำความสะอาด", type="csv", key="clean")
-    if f2:
-        df = pd.read_csv(f2)
-        st.write("ค่าว่างแต่ละคอลัมน์:", df.isnull().sum())
-        num = df.select_dtypes("number").columns
-        for c in num:
-            df[c] = df[c].fillna(df[c].mean())
-        if len(num) > 0:
-            col = st.selectbox("คอลัมน์ลบค่าผิดปกติ (IQR)", num)
-            Q1, Q3 = df[col].quantile(0.25), df[col].quantile(0.75)
-            IQR = Q3 - Q1
-            ก่อน = len(df)
-            df = df[(df[col] >= Q1 - 1.5*IQR) & (df[col] <= Q3 + 1.5*IQR)]
-            st.info(f"ลบค่าผิดปกติออก {ก่อน - len(df)} แถว")
-        st.dataframe(df, use_container_width=True)
-        st.download_button("ดาวน์โหลดไฟล์ที่สะอาด",
-                           df.to_csv(index=False).encode("utf-8-sig"),
-                           "cleaned.csv", "text/csv")
+# ---------- แท็บ 3: ราคาสินค้าเกษตร (data.go.th) ----------
+with แท็บราคา:
+    st.subheader("ราคาสินค้าเกษตรจริง (ข้อมูลเปิดภาครัฐ)")
+    ราคา = ดึงราคาเกษตร()
+    ปีล่าสุด = int(ราคา["ปี"].max())
+    สินค้าทั้งหมด = sorted(ราคา["สินค้า"].dropna().unique())
+    ค่าเริ่ม = [s for s in ["ทุเรียนหมอนทองคละ", "เงาะโรงเรียนคละ", "ยางแผ่นดิบชั้น 3"]
+               if s in สินค้าทั้งหมด]
+    เลือก = st.multiselect("เลือกสินค้าที่จะดู", สินค้าทั้งหมด, default=ค่าเริ่ม)
+    st.caption(f"ข้อมูลล่าสุดปี พ.ศ. {ปีล่าสุด} — สถิติทางการรายเดือน (จ.บึงกาฬ)")
+    เดือนเรียง = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+                 "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+    if เลือก:
+        ปีนี้ = ราคา[(ราคา["ปี"] == ปีล่าสุด) & (ราคา["สินค้า"].isin(เลือก))].copy()
+        ปีนี้["เดือน"] = pd.Categorical(ปีนี้["เดือน"], categories=เดือนเรียง, ordered=True)
+        ตาราง = ปีนี้.pivot_table(index="เดือน", columns="สินค้า",
+                                 values="ราคา", observed=False)
+        st.line_chart(ตาราง)
+        เดือนล่าสุด = ตาราง.dropna(how="all").index[-1]
+        st.write(f"ราคาเดือนล่าสุด ({เดือนล่าสุด} {ปีล่าสุด}) หน่วย บาท/กก.")
+        st.dataframe(ตาราง.loc[[เดือนล่าสุด]].T.rename(columns={เดือนล่าสุด: "ราคา"}),
+                     use_container_width=True)
+    else:
+        st.warning("เลือกสินค้าอย่างน้อย 1 อย่าง")
